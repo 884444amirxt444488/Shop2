@@ -1,9 +1,9 @@
-/*
+
+using System.Security.Cryptography;
+using System.Text;
+using Microsoft.AspNetCore.Mvc;
 using Npgsql;
 using ShopApi.Dtos;
-using Microsoft.AspNetCore.Mvc;
-
-
 
 public class AuthService
 {
@@ -14,296 +14,91 @@ public class AuthService
     {
         _db = db;
         _jwt = jwt;
-    }
-    public async Task<SignupResultDto> Signup(SignupDto NewUser)
+    } 
+
+    public async Task<SignupResultDto> Signup(SignupDto User)
     {
-        using NpgsqlConnection connection = _db.CreateDataBaseConnetion();
-        await connection.OpenAsync();
-        using NpgsqlCommand command1 = new NpgsqlCommand("SELECT * FROM users WHERE username = @username OR email = @email", connection);
-
-        command1.Parameters.AddWithValue("username", NewUser.Username);
-        command1.Parameters.AddWithValue("email", NewUser.Email);
-        using (NpgsqlDataReader reader1 = await command1.ExecuteReaderAsync())
-        {
-            if (await reader1.ReadAsync())
-            {
-                throw new AppError(409, "This username or email already exists");
-            }
-        }
-
-        using NpgsqlCommand command2 = new NpgsqlCommand("INSERT INTO users(username, email, password, refreshtoken) VALUES(@username, @email, @password, @refreshtoken) RETURNING *", connection);
-
-        string HashPassword = BCrypt.Net.BCrypt.HashPassword(NewUser.Password);
-        string RefreshToken = _jwt.GenerateRefreshToken();
-
-        command2.Parameters.AddWithValue("username", NewUser.Username);
-        command2.Parameters.AddWithValue("email", NewUser.Email);
-        command2.Parameters.AddWithValue("password", HashPassword);
-        command2.Parameters.AddWithValue("refreshtoken", RefreshToken);
-
-        string Username;
-        string Email;
-        string AccessToken;
-
-        using (NpgsqlDataReader reader2 = await command2.ExecuteReaderAsync())
-        {
-            if (!await reader2.ReadAsync())
-            {
-                throw new AppError(500, "Somthing went wrong. please try again");
-            }
-            Username = reader2.GetString(1);
-            Email = reader2.GetString(2);
-            AccessToken = _jwt.GenerateAccessToken(reader2.GetInt32(0));
-        }
-        return new SignupResultDto
-        {
-            Username = Username,
-            Email = Email,
-            AccessToken = AccessToken,
-            RefreshToken = RefreshToken
-        };
-    }
-
-    public async Task<LoginResultDto> Login(LoginDto User)
-    {
-        using NpgsqlConnection connection = _db.CreateDataBaseConnetion();
+        string HashPassword = BCrypt.Net.BCrypt.HashPassword(User.Password);
+        using NpgsqlConnection connection = _db.CreateConnection();
         await connection.OpenAsync();
 
         using NpgsqlTransaction transaction = connection.BeginTransaction();
 
-        using NpgsqlCommand command = new NpgsqlCommand("SELECT * FROM users WHERE username = @username", connection);
-
-        command.Transaction = transaction;
-
-        command.Parameters.AddWithValue("username", User.Username);
-
-        int UserId;
-        string Username;
-        string Email;
-        string AccessToken;
-        string RefreshToken;
-        using (NpgsqlDataReader reader = await command.ExecuteReaderAsync())
+        try
         {
-            if (!await reader.ReadAsync())
+            using (NpgsqlCommand command1 = new NpgsqlCommand("SELECT 1 FROM users WHERE username = @username OR email = @email LIMIT 1", connection, transaction))
             {
-                await transaction.RollbackAsync();
-                throw new AppError(401, "Incorrect username or password");
+
+                command1.Parameters.AddWithValue("username", User.Username);
+                command1.Parameters.AddWithValue("email", User.Email);
+
+                Object? isUserFound = await command1.ExecuteScalarAsync();
+
+                if (isUserFound != null)
+                {
+                    throw new AppError(409, "This username or email already exists");
+                }
             }
-            bool ValidPassword = BCrypt.Net.BCrypt.Verify(User.Password, reader.GetString(3));
-            if (!ValidPassword)
+
+            int UserId;
+            string Username;
+            string Email;
+            string AccessToken;
+            string RefreshToken;
+
+            using (NpgsqlCommand command2 = new NpgsqlCommand("INSERT INTO users(username, email, password) VALUES(@username, @email, @password) RETURNING *", connection, transaction))
             {
-                await transaction.RollbackAsync();
-                throw new AppError(401, "Incorrect username or password");
+                command2.Parameters.AddWithValue("username", User.Username);
+                command2.Parameters.AddWithValue("email", User.Email);
+                command2.Parameters.AddWithValue("password", HashPassword);
+
+                using (NpgsqlDataReader reader1 = await command2.ExecuteReaderAsync())
+                {
+                    if (!await reader1.ReadAsync())
+                    {
+                        throw new AppError(500, "Somthing went wrong. please try again");
+                    }
+                    UserId = reader1.GetInt32(0);
+                    Username = reader1.GetString(1);
+                    Email = reader1.GetString(2);
+                    AccessToken = _jwt.GenerateAccessToken(UserId);
+                    RefreshToken = _jwt.GenerateRefreshToken();
+                }
             }
-            UserId =reader.GetInt32(0);
-            Username = reader.GetString(1);
-            Email = reader.GetString(2);
-            AccessToken = _jwt.GenerateAccessToken(reader.GetInt32(0));
-            RefreshToken = _jwt.GenerateRefreshToken();
-        }
-        using NpgsqlCommand command2 = new NpgsqlCommand("UPDATE users SET refreshtoken = @refreshtoken WHERE id = @UserId RETURNING *", connection);
-        command2.Parameters.AddWithValue("refreshtoken", RefreshToken);
-        command2.Parameters.AddWithValue("UserId", UserId);
-        command2.Transaction = transaction;
-        using (NpgsqlDataReader reader2 = await command2.ExecuteReaderAsync())
-        {
-            if (!await reader2.ReadAsync())
+
+            string HashRefreshToken = Convert.ToHexString(
+                SHA512.HashData(
+                    Encoding.UTF8.GetBytes(RefreshToken)
+                )
+            );
+            DateTimeOffset dateTimeOffset = DateTimeOffset.UtcNow.AddDays(7);
+
+            using (NpgsqlCommand command3 = new NpgsqlCommand("INSERT INTO refreshtokens(userid, refreshtoken_hashed, expires) VALUES(@userid, @refreshtoken_hashed, @expires)", connection, transaction))
             {
-                await transaction.RollbackAsync();
-                throw new AppError(500, "Somthing went wrong. please try again");
+                command3.Parameters.AddWithValue("userid", UserId);
+                command3.Parameters.AddWithValue("refreshtoken_hashed", HashRefreshToken);
+                command3.Parameters.AddWithValue("expires", dateTimeOffset);
+
+                int Signuped = await command3.ExecuteNonQueryAsync();
+                if (Signuped != 1)
+                {
+                    throw new AppError(500, "Somthing went wrong. please try again");
+                }
             }
-        }
-        await transaction.CommitAsync();
-        return new LoginResultDto
-        {
-            Username = Username,
-            Email = Email,
-            AccessToken = AccessToken,
-            RefreshToken = RefreshToken
-        };
-    }
-    public async Task<ProfileDto> Profile(int UserId)
-    {
-        using NpgsqlConnection connection = _db.CreateDataBaseConnetion();
-        await connection.OpenAsync();
-
-        using NpgsqlCommand command = new NpgsqlCommand("SELECT * FROM users WHERE id = @id", connection);
-
-        command.Parameters.AddWithValue("id", UserId);
-
-
-        string Username;
-        string Email;
-
-        using (NpgsqlDataReader reader = await command.ExecuteReaderAsync())
-        {
-            if (!await reader.ReadAsync())
+            await transaction.CommitAsync();
+            return new SignupResultDto
             {
-                throw new AppError(404, "Not found");
-            }
-            Username = reader.GetString(1);
-            Email = reader.GetString(2);
+                Username = Username,
+                Email = Email,
+                AccessToken = AccessToken,
+                RefreshToken = RefreshToken
+            };
         }
-        return new ProfileDto
+        catch
         {
-            Username = Username,
-            Email = Email
-        };
-    }
-    public async Task<bool> Delete(int UserId)
-    {
-        using NpgsqlConnection connection = _db.CreateDataBaseConnetion();
-        await connection.OpenAsync();
-
-        using NpgsqlCommand command = new NpgsqlCommand("DELETE FROM users WHERE id = @id RETURNING *", connection);
-
-        command.Parameters.AddWithValue(UserId);
-
-        using  (NpgsqlDataReader reader = await command.ExecuteReaderAsync())
-        {
-            if (!await reader.ReadAsync())
-            {
-                throw new AppError(404, "This user already not exists");
-            }
+            await transaction.RollbackAsync();
+            throw;
         }
-        return true;
-    }
-
-    public async Task<EditResultDto> Edit(int UserId, EditDto UserToEdit) 
-    {
-        List<string> fields = [];
-        
-        if (!string.IsNullOrWhiteSpace(UserToEdit.Username))
-        {
-            fields.Add($"username = @username");
-        }
-        if (!string.IsNullOrWhiteSpace(UserToEdit.Email))
-        {
-            fields.Add($"email = @email");
-        }
-        if (fields.Count == 0)
-        {
-            throw new AppError(400, "Username or email is required");
-        }
-        
-        using NpgsqlConnection connection = _db.CreateDataBaseConnetion();
-        await connection.OpenAsync();
-
-        using NpgsqlCommand command1 = new NpgsqlCommand($"SELECT 1 FROM users WHERE ({string.Join(" OR ", fields)}) AND id != @id LIMIT 1", connection);
-
-        if (!string.IsNullOrWhiteSpace(UserToEdit.Username))
-        {
-            command1.Parameters.AddWithValue("username", UserToEdit.Username);
-        }
-        if (!string.IsNullOrWhiteSpace(UserToEdit.Email))
-        {
-            command1.Parameters.AddWithValue("email", UserToEdit.Email);
-        }
-        command1.Parameters.AddWithValue("id", UserId);
-
-        using (NpgsqlDataReader reader1 = await command1.ExecuteReaderAsync())
-        {
-            if (await reader1.ReadAsync())
-            {
-                throw new AppError(409, "This username or email already exists");
-            }
-        }
-
-        using NpgsqlCommand command2 = new NpgsqlCommand($"UPDATE users SET {string.Join(", ", fields)} WHERE id = @id RETURNING *", connection);
-
-        if (!string.IsNullOrWhiteSpace(UserToEdit.Username))
-        {
-            command2.Parameters.AddWithValue("username", UserToEdit.Username);
-        }
-        if (!string.IsNullOrWhiteSpace(UserToEdit.Email))
-        {
-            command2.Parameters.AddWithValue("email", UserToEdit.Email);
-        }
-        command2.Parameters.AddWithValue("id", UserId);
-
-        string NewUsername;
-        string NewEmail;
-
-        using (NpgsqlDataReader reader2 = await command2.ExecuteReaderAsync())
-        {
-            if (!await reader2.ReadAsync())
-            {
-                throw new AppError(500, "Somthing went wrong. please try again");
-            }
-            NewUsername = reader2.GetString(1);
-            NewEmail = reader2.GetString(2);
-        }
-        return new EditResultDto
-        {
-            NewUsername = NewUsername,
-            NewEmail = NewEmail
-        };
-    }
-}
-*/
-
-using Npgsql;
-using ShopApi.Dtos;
-
-public class AuthService
-{
-    private readonly DataBaseConnection _db;
-    private readonly JwtService _jwt;
-    public AuthService(DataBaseConnection db, JwtService jwt)
-    {
-        _db = db;
-        _jwt = jwt;
-    }
-
-    public async Task<SignupResultDto> Signup(SignupDto User)
-    {
-        using NpgsqlConnection connection = _db.CreateConnection();
-        await connection.OpenAsync();
-
-         using NpgsqlCommand command1 = new NpgsqlCommand("SELECT * FROM users WHERE username = @username OR email = @email", connection);
-
-        command1.Parameters.AddWithValue("username", User.Username);
-        command1.Parameters.AddWithValue("email", User.Email);
-            
-        using (NpgsqlDataReader reader1 = await command1.ExecuteReaderAsync())
-        {
-            if (await reader1.ReadAsync())
-            {
-                throw new AppError(409, "This username or email already exists");
-            }
-        }
-        using NpgsqlCommand command2 = new NpgsqlCommand("INSERT INTO users(username, email, password) VALUES(@username, @email, @password) RETURNING *", connection);
-
-        string HashPassword = BCrypt.Net.BCrypt.HashPassword(User.Password);
-
-        command2.Parameters.AddWithValue("username", User.Username);
-        command2.Parameters.AddWithValue("email", User.Email);
-        command2.Parameters.AddWithValue("password", HashPassword);
-
-
-        string Username;
-        string Email;
-        string AccessToken;
-        string RefreshToken;
-
-        using (NpgsqlDataReader reader2 = await command2.ExecuteReaderAsync())
-        {
-            if (!await reader2.ReadAsync())
-            {
-                throw new AppError(500, "Somthing went wrong. please try again");
-            }
-            Username = reader2.GetString(1);
-            Email = reader2.GetString(2);
-            AccessToken = _jwt.GenerateAccessToken(reader2.GetInt32(0));
-            RefreshToken = _jwt.GenerateRefreshToken();
-        }
-        return new SignupResultDto
-        {
-            Username = Username,
-            Email = Email,
-            AccessToken = AccessToken,
-            RefreshToken = RefreshToken
-        };
     }
 
     public async Task<LoginResultDto> Login(LoginDto User)
@@ -311,45 +106,251 @@ public class AuthService
         using NpgsqlConnection connection = _db.CreateConnection();
         await connection.OpenAsync();
 
-        using NpgsqlCommand command = new NpgsqlCommand("SELECT * FROM users WHERE username = @username", connection);
+        using NpgsqlTransaction transaction = connection.BeginTransaction();
 
-        command.Parameters.AddWithValue("username", User.Username);
-
-        string Username;
-        string Email;
-        string AccessToken;
-        string RefreshToken;
-
-        using (NpgsqlDataReader reader = await command.ExecuteReaderAsync())
+        try
         {
-            if (!await reader.ReadAsync())
+            int UserId;
+            string Username;
+            string Email;
+            string AccessToken;
+            string RefreshToken;
+
+            using (NpgsqlCommand command1 = new NpgsqlCommand("SELECT * FROM users WHERE username = @username", connection, transaction))
             {
-                throw new AppError(401, "Incorrect username or password");
+                command1.Parameters.AddWithValue("username", User.Username);
+
+                using (NpgsqlDataReader reader1 = await command1.ExecuteReaderAsync())
+                {
+                    if (!await reader1.ReadAsync())
+                    {
+                        throw new AppError(401, "Incorrect username or password");
+                    }
+                    bool ValidPassword = BCrypt.Net.BCrypt.Verify(User.Password, reader1.GetString(3));
+                    if (!ValidPassword)
+                    {
+                        throw new AppError(401, "Incorrect username or password");
+                    }
+                    UserId = reader1.GetInt32(0);
+                    Username = reader1.GetString(1);
+                    Email = reader1.GetString(2);
+                    AccessToken = _jwt.GenerateAccessToken(UserId);
+                    RefreshToken = _jwt.GenerateRefreshToken();
+                }
             }
-            bool ValidPassword = BCrypt.Net.BCrypt.Verify(User.Password, reader.GetString(3));
-            if (!ValidPassword)
+            using (NpgsqlCommand command2 = new NpgsqlCommand("INSERT INTO refreshtokens(userid, refreshtoken_hashed, expires) VALUES(@userid, @refreshtoken_hashed, @expires)", connection, transaction))
             {
-                throw new AppError(401, "Incorrect username or password");
+                string HashRefreshToken = Convert.ToHexString(
+                    SHA512.HashData(
+                        Encoding.UTF8.GetBytes(RefreshToken)
+                    )
+                );
+                DateTimeOffset dateTimeOffset = DateTimeOffset.UtcNow.AddDays(7);
+                command2.Parameters.AddWithValue("userid", UserId);
+                command2.Parameters.AddWithValue("refreshtoken_hashed", HashRefreshToken);
+                command2.Parameters.AddWithValue("expires", dateTimeOffset);
+
+                int IsRefreshTokenSet = await command2.ExecuteNonQueryAsync();
+                if (IsRefreshTokenSet != 1)
+                {
+                    throw new AppError(500, "Somthing went wrong. please try again");
+                } 
             }
-            Username = reader.GetString(1);
-            Email = reader.GetString(2);
-            AccessToken = _jwt.GenerateAccessToken(reader.GetInt32(0));
-            RefreshToken = _jwt.GenerateRefreshToken();
+            await transaction.CommitAsync();
+            return new LoginResultDto
+            {
+                Username = Username,
+                Email = Email,
+                AccessToken = AccessToken,
+                RefreshToken = RefreshToken
+            };
         }
-        return new LoginResultDto
+        catch
         {
-            Username = Username,
-            Email = Email,
-            AccessToken = AccessToken,
-            RefreshToken = RefreshToken
-        };
+            await transaction.RollbackAsync();
+            throw;
+        }
     }
+
+    public async Task<ProfileDto> Profile(int UserId)
+    {
+        try
+        {
+            using NpgsqlConnection connection = _db.CreateConnection();
+            await connection.OpenAsync();
+
+            string Username;
+            string Email;
+
+            using (NpgsqlCommand command = new NpgsqlCommand("SELECT * FROM users WHERE id = @UserId", connection))
+            {
+                command.Parameters.AddWithValue("UserId", UserId);
+                using (NpgsqlDataReader reader = await command.ExecuteReaderAsync())
+                {
+                    if (!await reader.ReadAsync())
+                    {
+                        throw new AppError(404, "User not found");
+                    }
+                    Username = reader.GetString(1);
+                    Email = reader.GetString(2);
+                }
+            }
+            return new ProfileDto
+            {
+                Username = Username,
+                Email = Email
+            };
+        }
+        catch
+        {
+            throw;
+        }
+    }
+
+    public async Task<bool> DeleteUser(int UserId)
+    {
+        try
+        {
+            using NpgsqlConnection connection = _db.CreateConnection();
+            await connection.OpenAsync();
+
+            using (NpgsqlCommand command = new NpgsqlCommand("DELETE FROM users WHERE id = @UserId", connection))
+            {
+                command.Parameters.AddWithValue("UserId", UserId);
+                int isUserDeleted = await command.ExecuteNonQueryAsync();
+                if (isUserDeleted != 1)
+                {
+                    throw new AppError(404, "User already not found");
+                }
+            } 
+            return true;
+        }
+        catch
+        {
+            throw;
+        }
+    }
+
+    public async Task<EditResultDto> EditUser(int UserId, EditDto User)
+    {
+        using NpgsqlConnection connection = _db.CreateConnection();
+        await connection.OpenAsync();
+
+        using NpgsqlTransaction transaction = connection.BeginTransaction();
+
+        List<string> fields = [];
+
+        if (!string.IsNullOrWhiteSpace(User.Username))
+        {
+            fields.Add("username = @username");
+        }
+        if (!string.IsNullOrWhiteSpace(User.Email))
+        {
+            fields.Add("email = @email");
+        }
+
+        if (fields.Count == 0)
+        {
+            throw new AppError(400, "Username or email is required");
+        }
+
+        try
+        {
+            using (NpgsqlCommand command1 = new NpgsqlCommand($"SELECT 1 FROM users WHERE ({string.Join(" OR ", fields)}) AND id != @UserId LIMIT 1", connection, transaction))
+            {
+                if (!string.IsNullOrWhiteSpace(User.Username))
+                {
+                    command1.Parameters.AddWithValue("username", User.Username);
+                }
+                if (!string.IsNullOrWhiteSpace(User.Email))
+                {
+                    command1.Parameters.AddWithValue("email", User.Email);
+                }
+                command1.Parameters.AddWithValue("UserId", UserId);
+                Object? isUserFound = await command1.ExecuteScalarAsync();
+                if (isUserFound != null)
+                {
+                    throw new AppError(409, "This username or email already exists");
+                }
+            }
+
+            string Username;
+            string Email;
+
+            using (NpgsqlCommand command2 = new NpgsqlCommand($"UPDATE users SET {string.Join(", ", fields)} WHERE id = @UserId RETURNING *", connection, transaction))
+            {
+                if (!string.IsNullOrWhiteSpace(User.Username))
+                {
+                    command2.Parameters.AddWithValue("username", User.Username);
+                }
+                if (!string.IsNullOrWhiteSpace(User.Email))
+                {
+                    command2.Parameters.AddWithValue("email", User.Email);
+                }
+                command2.Parameters.AddWithValue("UserId", UserId);
+                using (NpgsqlDataReader reader = await command2.ExecuteReaderAsync())
+                {
+                    if (!await reader.ReadAsync())
+                    {
+                        throw new AppError(500, "Somthing went wrong. please try again");
+                    }
+                    Username = reader.GetString(1);
+                    Email = reader.GetString(2);
+                }
+            }
+            await transaction.CommitAsync();
+            return new EditResultDto
+            {
+                Username = Username,
+                Email = Email
+            };
+        }
+        catch
+        {
+            await transaction.RollbackAsync();
+            throw;
+        }
+    }
+
+    public async Task<string> RefreshToken(string RefreshToken)
+    {
+        try
+        {
+            using NpgsqlConnection connection = _db.CreateConnection();
+            await connection.OpenAsync();
+
+            string HashRefreshToken = Convert.ToHexString(
+                SHA512.HashData(
+                    Encoding.UTF8.GetBytes(RefreshToken)
+                )
+            );
+
+            string AccessToken;
+
+            using (NpgsqlCommand command = new NpgsqlCommand("SELECT userid FROM refreshtokens WHERE refreshtoken_hashed = @RefreshToken AND expires > @Now LIMIT 1", connection))
+            {
+                command.Parameters.AddWithValue("RefreshToken", HashRefreshToken);
+                command.Parameters.AddWithValue("Now", DateTimeOffset.UtcNow);
+
+                Object? UserId = await command.ExecuteScalarAsync();
+                if (UserId == null)
+                {
+                    throw new AppError(401, "Not authiruzed");
+                }
+                AccessToken = _jwt.GenerateAccessToken(Convert.ToInt32(UserId));
+            }
+            return AccessToken;
+        }
+        catch
+        {
+            throw;
+        }
+    }
+
+
+
+
 }
-
-
-
-
-
 
 
 

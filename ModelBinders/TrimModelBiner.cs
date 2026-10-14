@@ -5,16 +5,20 @@ public class TrimModelBinder : IModelBinder
     public Task BindModelAsync(ModelBindingContext modelBindingContext)
     {
         var Value = modelBindingContext.ValueProvider.GetValue(modelBindingContext.ModelName);
+
         if (Value == ValueProviderResult.None)
         {
             return Task.CompletedTask;
         }
-        string? result = Value.FirstValue;
-        if (result != null)
+
+        string? Result = Value.FirstValue;
+
+        if (Result != null)
         {
-            result = result.Trim();
+            Result = Result.Trim();
         }
-        modelBindingContext.Result = ModelBindingResult.Success(result);
+        
+        modelBindingContext.Result = ModelBindingResult.Success(Result);
         return Task.CompletedTask;
     }
 }
@@ -38,13 +42,11 @@ public class TrimModelBinder : IModelBinder
         {
             Result = Result.Trim();
         }
-        
-        modelBindingContext.Result = ModelBindingResult.Success(Result); 
+
+        modelBindingContext.Result = ModelBindingResult.Success(Result);
         return Task.CompletedTask;
     }
 }
-
-
 
 
 
