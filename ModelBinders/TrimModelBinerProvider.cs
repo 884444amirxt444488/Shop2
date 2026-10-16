@@ -1,6 +1,7 @@
 /*
-using Microsoft.AspNetCore.Mvc.ModelBinding;
 using Microsoft.AspNetCore.Mvc.ModelBinding.Binders;
+using Microsoft.AspNetCore.Mvc.ModelBinding;
+
 public class TrimModelBinderProvider : IModelBinderProvider
 {
     public IModelBinder? GetBinder(ModelBinderProviderContext modelBinderProviderContext)
@@ -28,9 +29,6 @@ public class TrimModelBinderProvider : IModelBinderProvider
         return null;
     }
 }
-
-
-
 
 
 

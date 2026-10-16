@@ -1,28 +1,31 @@
 
-using System.IdentityModel.Tokens.Jwt;
-using Microsoft.AspNetCore.Authorization;
-using Microsoft.AspNetCore.Mvc;
 using ShopApi.Dtos;
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Authorization;
+using System.IdentityModel.Tokens.Jwt;
 
 [ApiController]
 [Route("api/[controller]")]
 
 public class AuthController : ControllerBase
 {
+
     private readonly AuthService _authService;
+
     public AuthController(AuthService authService)
     {
         _authService = authService;
     }
 
+
     [HttpPost("Signup")]
-    public async Task<IActionResult> Signup([FromBody] SignupDto newUser)
+    public async Task<IActionResult> Signup([FromBody] SignupDto NewUser)
     {
         try
         {
-            SignupResultDto result = await _authService.Signup(newUser);
+            SignupResultDto result = await _authService.Signup(NewUser);
             Response.Cookies.Append(
-                "refreshToken",
+                "RefreshToken",
                 result.RefreshToken,
                 new CookieOptions
                 {
@@ -34,21 +37,22 @@ public class AuthController : ControllerBase
             );
             return Created("api/Auth/Signup", new
             {
+                Message = "Signup successfully",
                 Username = result.Username,
                 Email = result.Email,
                 AccessToken = result.AccessToken
             });
         }
-        catch (AppError ApE)
+        catch(AppError ApE)
         {
             return StatusCode(ApE.StatusCode, ApE.Message);
-        } 
+        }
         catch (Exception Err)
         {
             Console.WriteLine($"Error to signup: {Err}");
-            return StatusCode(500, "Error from server. please try later");
+            return StatusCode(500, "Error form server. please try later");
         }
-    }
+    }    
 
     [HttpPost("Login")]
     public async Task<IActionResult> Login([FromBody] LoginDto User)
@@ -57,7 +61,7 @@ public class AuthController : ControllerBase
         {
             LoginResultDto result = await _authService.Login(User);
             Response.Cookies.Append(
-                "refreshToken",
+                "RefreshToken",
                 result.RefreshToken,
                 new CookieOptions
                 {
@@ -69,22 +73,22 @@ public class AuthController : ControllerBase
             );
             return Ok(new
             {
+                Message = "Login succesfully",
                 Username = result.Username,
                 Email = result.Email,
                 AccessToken = result.AccessToken
             });
         }
-        catch (AppError ApE)
+        catch(AppError ApE)
         {
             return StatusCode(ApE.StatusCode, ApE.Message);
         }
         catch (Exception Err)
         {
             Console.WriteLine($"Error to login: {Err}");
-            return StatusCode(500, "Error from server. please try later");
+            return StatusCode(500, "Error form server. please try later");
         }
     }
-
     [Authorize]
     [HttpGet("Profile")]
     public async Task<IActionResult> Profile()
@@ -98,18 +102,19 @@ public class AuthController : ControllerBase
             ProfileDto result = await _authService.Profile(UserId);
             return Ok(new
             {
+                Message = "Welcom",
                 Username = result.Username,
                 Email = result.Email
             });
         }
-        catch (AppError ApE)
+        catch(AppError ApE)
         {
             return StatusCode(ApE.StatusCode, ApE.Message);
         }
         catch (Exception Err)
         {
-            Console.WriteLine($"Error to get profile: {Err}");
-            return StatusCode(500, "Error from server. please try later");
+            Console.WriteLine($"Error to profile: {Err}");
+            return StatusCode(500, "Error form server. please try later");
         }
     }
 
@@ -123,35 +128,26 @@ public class AuthController : ControllerBase
         }
         try
         {
-            await _authService.DeleteUser(UserId);
-            Response.Cookies.Delete(
-                "refreshToken",
-                new CookieOptions
-                {
-                    HttpOnly = true,
-                    Secure = false,
-                    SameSite = SameSiteMode.Strict
-                }
-            );
+            bool result = await _authService.Delete(UserId);
             return Ok(new
             {
                 Message = "User deleted successfully"
             });
         }
-        catch (AppError ApE)
+        catch(AppError ApE)
         {
             return StatusCode(ApE.StatusCode, ApE.Message);
         }
         catch (Exception Err)
         {
-            Console.WriteLine($"Error to delete user: {Err}");
-            return StatusCode(500, "Error from server. please try later");
+            Console.WriteLine($"Error to delete profile: {Err}");
+            return StatusCode(500, "Error form server. please try later");
         }
     }
 
     [Authorize]
     [HttpPatch("Edit")]
-    public async Task<IActionResult> Edit([FromBody] EditDto NewUser)
+    public async Task<IActionResult> Edit([FromBody] EditDto EditUser)
     {
         if (!int.TryParse(User.FindFirst(JwtRegisteredClaimNames.Sub)?.Value, out int UserId))
         {
@@ -159,51 +155,121 @@ public class AuthController : ControllerBase
         }
         try
         {
-            EditResultDto result = await _authService.EditUser(UserId, NewUser);
+            EditResultDto result = await _authService.Edit(UserId, EditUser);
             return Ok(new
             {
-                Message = "User updated successfully",
+                Message = "User Updated successfully",
                 Username = result.Username,
                 Email = result.Email
             });
         }
-        catch (AppError ApE)
+        catch(AppError ApE)
         {
             return StatusCode(ApE.StatusCode, ApE.Message);
         }
         catch (Exception Err)
         {
-            Console.WriteLine($"Error to edit user: {Err}");
-            return StatusCode(500, "Error from server. please try later");
+            Console.WriteLine($"Error to edit profile: {Err}");
+            return StatusCode(500, "Error form server. please try later");
         }
     }
-
-    [HttpPost("RefreshToken")]
-    public async Task<IActionResult> RefreshToken()
+    [Authorize]
+    [HttpPost("EditPassword")]
+    public async Task<IActionResult> EditPassword([FromBody] EditPasswordDto EditPass)
+    {
+        if (!int.TryParse(User.FindFirst(JwtRegisteredClaimNames.Sub)?.Value, out int UserId))
+        {
+            return Unauthorized("Not login. login first");
+        }
+        try
+        {
+            bool result = await _authService.EditPassword(UserId, EditPass);
+            return Ok(new
+            {
+                Message = "Your password updated successfully"
+            });
+        }
+        catch(AppError ApE)
+        {
+            return StatusCode(ApE.StatusCode, ApE.Message);
+        }
+        catch (Exception Err)
+        {
+            Console.WriteLine($"Error to edit password: {Err}");
+            return StatusCode(500, "Error form server. please try later");
+        }
+    }
+    [HttpPost("GetCode")]
+    public async Task<IActionResult> GetCode([FromBody] GetCodeDto Email)
     {
         try
         {
-            string? RefreshToken = Request.Cookies["refreshToken"];
-            if (string.IsNullOrWhiteSpace(RefreshToken))
+            bool result = await _authService.GetCode(Email);
+            return Ok(new
             {
-                return Unauthorized("Not login. login first");
-            }
+                Message = "Code send successfully"
+            });
+        }
+        catch(AppError ApE)
+        {
+            return StatusCode(ApE.StatusCode, ApE.Message);
+        }
+        catch (Exception Err)
+        {
+            Console.WriteLine($"Error to Get code: {Err}");
+            return StatusCode(500, "Error form server. please try later");
+        }
+    }
+    [HttpPost("ChangeForgottenPassword")]
+    public async Task<IActionResult> ChangePassword([FromBody] FPDto FP)
+    {
+        try
+        {
+            bool result = await _authService.ChangeForgottenPassword(FP);
+            return Ok(new
+            {
+                Message = "your password changed successfully"
+            });
+        }
+        catch(AppError ApE)
+        {
+            return StatusCode(ApE.StatusCode, ApE.Message);
+        }
+        catch (Exception Err)
+        {
+            Console.WriteLine($"Error to Get code: {Err}");
+            return StatusCode(500, "Error form server. please try later");
+        }
+    }
+    [HttpPost("RefreshToken")]
+    public async Task<IActionResult> RefreshToken()
+    {
+        string? RefreshToken = Request.Cookies["RefreshToken"];
+        Console.WriteLine(RefreshToken);
+        if (string.IsNullOrWhiteSpace(RefreshToken))
+        {
+            return Unauthorized("Not login. login please");
+        }
+        try
+        {
             string result = await _authService.RefreshToken(RefreshToken);
             return Ok(new
             {
                 AccessToken = result
             });
         }
-        catch (AppError ApE)
+        catch(AppError ApE)
         {
             return StatusCode(ApE.StatusCode, ApE.Message);
         }
         catch (Exception Err)
         {
-            Console.WriteLine($"Error to refresh token: {Err}");
-            return StatusCode(500, "Error from server. please try later");
+            Console.WriteLine($"Error to RefreshToken: {Err}");
+            return StatusCode(500, "Error form server. please try later");
         }
-    }
+    }  
 }
+
+
 
 

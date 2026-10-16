@@ -1,23 +1,22 @@
 /*
 using Microsoft.AspNetCore.Mvc.ModelBinding;
+using Microsoft.AspNetCore.Mvc.ModelBinding.Validation;
+
 public class TrimModelBinder : IModelBinder
 {
     public Task BindModelAsync(ModelBindingContext modelBindingContext)
     {
         var Value = modelBindingContext.ValueProvider.GetValue(modelBindingContext.ModelName);
-
         if (Value == ValueProviderResult.None)
         {
             return Task.CompletedTask;
         }
-
         string? Result = Value.FirstValue;
 
         if (Result != null)
         {
             Result = Result.Trim();
         }
-        
         modelBindingContext.Result = ModelBindingResult.Success(Result);
         return Task.CompletedTask;
     }
@@ -25,7 +24,6 @@ public class TrimModelBinder : IModelBinder
 */
 
 using Microsoft.AspNetCore.Mvc.ModelBinding;
-
 public class TrimModelBinder : IModelBinder
 {
     public Task BindModelAsync(ModelBindingContext modelBindingContext)
@@ -35,7 +33,6 @@ public class TrimModelBinder : IModelBinder
         {
             return Task.CompletedTask;
         }
-
         string? Result = Value.FirstValue;
 
         if (Result != null)
@@ -46,9 +43,12 @@ public class TrimModelBinder : IModelBinder
         modelBindingContext.Result = ModelBindingResult.Success(Result);
         return Task.CompletedTask;
     }
+
+
+
+
+
 }
-
-
 
 
 

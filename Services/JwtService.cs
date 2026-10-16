@@ -1,17 +1,18 @@
 
 using System.IdentityModel.Tokens.Jwt;
-using System.Security.Claims;
 using System.Text;
-using Microsoft.IdentityModel.Tokens;
 using System.Security.Cryptography;
+using System.Security.Claims;
+using Microsoft.IdentityModel.Tokens;
+
 
 public class JwtService
 {
     private readonly IConfiguration _configuration;
 
-    public JwtService(IConfiguration configuration)
+    public JwtService(IConfiguration configurationBinder)
     {
-        _configuration = configuration;
+        _configuration = configurationBinder;
     }
 
     public string GenerateAccessToken(int UserId)
@@ -36,21 +37,21 @@ public class JwtService
         var AccessToken = new JwtSecurityToken(
             issuer: Issuer,
             audience: Audience,
-            expires: DateTime.UtcNow.AddDays(ExpiresMinutes),
+            expires: DateTime.UtcNow.AddMinutes(ExpiresMinutes),
+
             claims: claims,
             signingCredentials: credentials
         );
-        
         return new JwtSecurityTokenHandler().WriteToken(AccessToken);
-    } 
+    }
+
     public string GenerateRefreshToken()
     {
         byte[] bytes = RandomNumberGenerator.GetBytes(64);
         return Convert.ToBase64String(bytes);
     }
+
 }
-
-
 
 
 
